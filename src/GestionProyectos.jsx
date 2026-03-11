@@ -1,9 +1,9 @@
 // GestionProyectos.js - Componente Principal Mejorado
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { 
+import {
   Upload, Link, FileSpreadsheet, ArrowLeft, ArrowRight, RefreshCw,
   CheckCircle, Check, Database, BarChart3, Workflow, Factory, Truck, Building2,
-  Target
+  Target, Loader2
 } from 'lucide-react';
 
 // Importar todos los componentes
@@ -15,8 +15,15 @@ import EditProject from './EditProject';
 import DataSourceEditor from './DataSourceEditor';
 import StatisticsPanel from './StatisticsPanel';
 import KPIManager from './KPIManager';
+import { useAuth } from './features/auth/AuthContext';
+import { useProjects } from './shared/hooks/useProjects';
+import { useWorkflows } from './shared/hooks/useWorkflows';
 
 const GestionProyectos = () => {
+  const { organization } = useAuth();
+  const { data: dbProjects, loading: projectsLoading, error: projectsError, create: dbCreateProject, update: dbUpdateProject, remove: dbRemoveProject } = useProjects(organization?.id ?? null);
+  const { data: dbWorkflows } = useWorkflows(organization?.id ?? null, undefined);
+
   // Estados principales de navegación
   const [currentView, setCurrentView] = useState('projectList');
   const [newProjectStep, setNewProjectStep] = useState(1);
@@ -316,67 +323,31 @@ const GestionProyectos = () => {
     return workflows[operationType] || workflows.manufacturing;
   }, []);
 
-  // Datos iniciales de proyectos
-  const [projects, setProjects] = useState([
-    {
-      id: 1,
-      name: "Línea de Producción Automatizada",
-      operationType: 'manufacturing',
-      fileType: 'google-sheets',
-      googleSheetsUrl: 'https://docs.google.com/spreadsheets/d/1A2B3C4D5E6F7G8H9/edit',
-      status: 'active',
-      realTimeUpdates: true,
-      createdAt: '2024-01-10T08:00:00Z',
-      lastModified: '2024-01-15T14:30:00Z',
-      budget: '$1.8B',
-      completion: 67,
-      team: 145,
-      location: 'Planta Norte',
-      nextMilestone: 'Instalación Equipos Línea 3',
-      nextMilestoneDate: '2024-02-15',
-      riskLevel: 'medium',
-      workflow: null,
-      data: {
-        schema: [
-          { field: 'timestamp', type: 'datetime', sample: '2024-01-15 08:30:00' },
-          { field: 'line_id', type: 'string', sample: 'LINE-001' },
-          { field: 'production_rate', type: 'number', sample: 847.5 },
-          { field: 'quality_score', type: 'number', sample: 98.2 },
-          { field: 'efficiency', type: 'percentage', sample: 87.5 },
-          { field: 'downtime_minutes', type: 'number', sample: 15 }
-        ],
-        records: [
-          {
-            timestamp: '2024-01-15 08:30:00',
-            line_id: 'LINE-001',
-            production_rate: 847.5,
-            quality_score: 98.2,
-            efficiency: 87.5,
-            downtime_minutes: 15
-          }
-        ]
-      }
-    },
-    {
-      id: 2,
-      name: "Centro de Distribución Regional",
-      operationType: 'logistics',
-      fileType: 'excel',
-      status: 'active',
-      realTimeUpdates: false,
-      createdAt: '2024-01-08T10:00:00Z',
-      lastModified: '2024-01-15T16:20:00Z',
-      budget: '$950M',
-      completion: 89,
-      team: 78,
-      location: 'Zona Industrial Sur',
-      nextMilestone: 'Pruebas Sistema WMS',
-      nextMilestoneDate: '2024-02-01',
-      riskLevel: 'low',
-      workflow: null,
-      data: null
+  // Map DB rows to component shape, keep local state for workflow/data augmentation
+  const [projects, setProjects] = useState([]);
+
+  useEffect(() => {
+    if (dbProjects.length > 0) {
+      setProjects(dbProjects.map(p => ({
+        id: p.id,
+        name: p.name,
+        operationType: p.operation_type,
+        status: p.status,
+        realTimeUpdates: p.real_time_updates,
+        createdAt: p.created_at,
+        lastModified: p.updated_at,
+        budget: p.budget != null ? `$${Number(p.budget).toLocaleString()}` : '',
+        completion: p.completion,
+        team: p.team_size,
+        location: p.location || '',
+        nextMilestone: p.next_milestone || '',
+        nextMilestoneDate: p.next_milestone_date || '',
+        riskLevel: p.risk_level,
+        workflow: null,
+        data: null
+      })));
     }
-  ]);
+  }, [dbProjects]);
 
   // Función para obtener información de tipo de operación
   const getOperationTypeInfo = useCallback((type) => {
@@ -406,15 +377,37 @@ const GestionProyectos = () => {
     return types[type];
   }, []);
 
-  // Inicializar workflows en los proyectos
+  // Inicializar workflows en los proyectos: prefer DB workflows, fallback to hardcoded templates
   useEffect(() => {
-    setProjects(prevProjects => 
-      prevProjects.map(project => ({
-        ...project,
-        workflow: getGenericWorkflows(project.operationType, project.name)
-      }))
+    setProjects(prevProjects =>
+      prevProjects.map(project => {
+        // Check if there's a DB workflow for this project
+        const dbWorkflow = dbWorkflows.find(w => w.project_id === project.id);
+        if (dbWorkflow) {
+          return {
+            ...project,
+            workflowId: dbWorkflow.id,
+            workflow: {
+              name: dbWorkflow.name,
+              description: dbWorkflow.description || '',
+              totalDuration: dbWorkflow.total_duration || '',
+              estimatedCost: dbWorkflow.estimated_cost || '',
+              riskScore: dbWorkflow.risk_score || 0,
+              aiRecommendations: dbWorkflow.ai_recommendations || [],
+              nodes: [], // Will be loaded by useWorkflowCanvas inside WorkflowCanvas
+              connections: [], // Will be loaded by useWorkflowCanvas inside WorkflowCanvas
+            }
+          };
+        }
+        // Fallback to hardcoded template
+        return {
+          ...project,
+          workflowId: null,
+          workflow: getGenericWorkflows(project.operationType, project.name)
+        };
+      })
     );
-  }, [getGenericWorkflows]);
+  }, [getGenericWorkflows, dbWorkflows]);
 
   // Datos simulados para proyectos
   const getSimulatedData = useCallback((operationType, projectName) => {
@@ -780,8 +773,10 @@ const GestionProyectos = () => {
         } else if (newProjectStep === 3) {
           return projectWorkflow ? (
             <>
-              <WorkflowCanvas 
+              <WorkflowCanvas
                 workflow={projectWorkflow}
+                workflowId={null}
+                organizationId={organization?.id || null}
                 selectedNode={selectedNode}
                 onNodeSelect={setSelectedNode}
                 onBack={() => setNewProjectStep(2)}
@@ -853,8 +848,10 @@ const GestionProyectos = () => {
       case 'projectWorkflow':
         return selectedProject?.workflow ? (
           <>
-            <WorkflowCanvas 
+            <WorkflowCanvas
               workflow={selectedProject.workflow}
+              workflowId={selectedProject.workflowId || null}
+              organizationId={organization?.id || null}
               selectedNode={selectedNode}
               onNodeSelect={setSelectedNode}
               onBack={handleBackToList}
@@ -863,7 +860,7 @@ const GestionProyectos = () => {
               dragOffset={dragOffset}
               setDragOffset={setDragOffset}
             />
-          
+
           </>
         ) : null;
 
@@ -889,9 +886,30 @@ const GestionProyectos = () => {
     }
   };
 
+  if (projectsLoading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '50vh', gap: '12px', color: '#6b7684' }}>
+        <Loader2 size={24} style={{ animation: 'spin 1s linear infinite' }} />
+        <span>Cargando proyectos...</span>
+      </div>
+    );
+  }
+
+  if (projectsError) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', gap: '12px', color: '#ef4444' }}>
+        <span>Error al cargar proyectos: {projectsError}</span>
+        <button onClick={() => window.location.reload()} style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid #e5e8eb', cursor: 'pointer' }}>
+          Reintentar
+        </button>
+      </div>
+    );
+  }
+
   return (
     <>
       <style jsx>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .btn {
           display: flex;
           align-items: center;

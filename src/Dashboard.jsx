@@ -1,11 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { 
+import {
   TrendingUp, TrendingDown, Factory, Zap, Activity, DollarSign,
   Users, AlertTriangle, CheckCircle, Clock, Shield, Target,
-  Calendar, BarChart3, Gauge, Building, MapPin, RefreshCw
+  Calendar, BarChart3, Gauge, Building, MapPin, RefreshCw, Loader2
 } from 'lucide-react';
+import { useAuth } from './features/auth/AuthContext';
+import { useKPIs } from './shared/hooks/useKPIs';
+
+const ICON_MAP = {
+  'activity': Activity,
+  'dollar-sign': DollarSign,
+  'alert-triangle': AlertTriangle,
+  'package': Factory,
+  'shield-check': Shield,
+  'target': Target,
+  'factory': Factory,
+  'gauge': Gauge,
+};
 
 const Dashboard = () => {
+  const { organization } = useAuth();
+  const { data: dbKPIs, loading: kpisLoading, error: kpisError } = useKPIs(organization?.id ?? null);
+
   const [realTimeData, setRealTimeData] = useState({
     timestamp: new Date(),
     production: {
@@ -25,40 +41,15 @@ const Dashboard = () => {
     }
   });
 
-  const [kpis] = useState([
-    {
-      title: 'Eficiencia Operacional',
-      value: '87.3',
-      unit: '%',
-      trend: 12.5,
-      icon: Target,
-      color: '#0066cc'
-    },
-    {
-      title: 'Throughput Total',
-      value: '15.4K',
-      unit: 'units',
-      trend: 8.3,
-      icon: Factory,
-      color: '#f59e0b'
-    },
-    {
-      title: 'Ingresos Diarios',
-      value: '$4.2M',
-      unit: 'USD',
-      trend: 15.2,
-      icon: DollarSign,
-      color: '#22c55e'
-    },
-    {
-      title: 'Índice de Calidad',
-      value: '96.8',
-      unit: '%',
-      trend: 2.1,
-      icon: Shield,
-      color: '#8b5cf6'
-    }
-  ]);
+  // Map DB KPIs to component shape
+  const kpis = dbKPIs.map(k => ({
+    title: k.name,
+    value: k.display_value || String(k.value ?? 0),
+    unit: k.unit || '',
+    trend: Number(k.change_pct ?? 0),
+    icon: ICON_MAP[k.icon] || Target,
+    color: k.color || '#3b82f6'
+  }));
 
   const [projects] = useState([
     {
@@ -192,6 +183,24 @@ const Dashboard = () => {
       default: return <AlertTriangle size={16} color="#6b7280" />;
     }
   };
+
+  if (kpisLoading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '50vh', gap: '12px', color: '#6b7684' }}>
+        <Loader2 size={24} style={{ animation: 'spin 1s linear infinite' }} />
+        <span>Cargando dashboard...</span>
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
+  if (kpisError) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', gap: '12px', color: '#ef4444' }}>
+        <span>Error al cargar datos: {kpisError}</span>
+      </div>
+    );
+  }
 
   return (
     <>

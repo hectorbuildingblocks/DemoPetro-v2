@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens — Digital Twin Platform
+ * These override Tailwind defaults via @theme
+ */
+@theme {
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+
+  --color-surface: #fafbfc;
+  --color-surface-raised: #ffffff;
+  --color-border: #e5e8eb;
+  --color-text-primary: #1a1d21;
+  --color-text-secondary: #6b7684;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+}
+
+/* Base resets */
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}

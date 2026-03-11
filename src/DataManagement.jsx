@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
-import { 
+import React, { useState, useCallback } from 'react';
+import {
   Database, Plus, RefreshCw, Settings, Search, Filter,
   FileSpreadsheet, Cloud, Server, Link, Zap, CheckCircle,
   AlertTriangle, Clock, Edit3, Trash2, Upload, Download,
   BarChart3, Activity, Wifi, WifiOff
 } from 'lucide-react';
+import { DataIngestionFlow } from './features/data-ingestion';
 
 const DataManagement = () => {
   const [activeTab, setActiveTab] = useState('sources');
@@ -638,12 +639,19 @@ const DataManagement = () => {
             <Zap size={16} />
             Integraciones Disponibles
           </button>
-          <button 
+          <button
             className={`tab-button ${activeTab === 'monitoring' ? 'active' : ''}`}
             onClick={() => setActiveTab('monitoring')}
           >
             <BarChart3 size={16} />
             Monitoreo
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'upload' ? 'active' : ''}`}
+            onClick={() => setActiveTab('upload')}
+          >
+            <Upload size={16} />
+            Subir Archivo
           </button>
         </div>
 
@@ -812,6 +820,14 @@ const DataManagement = () => {
             <Activity size={48} style={{ marginBottom: '16px', opacity: 0.5 }} />
             <h3>Panel de Monitoreo</h3>
             <p>Métricas en tiempo real y alertas de rendimiento próximamente</p>
+          </div>
+        )}
+
+        {activeTab === 'upload' && (
+          <div style={{ padding: '24px 0' }}>
+            <DataIngestionFlow
+              onUploadComplete={() => setActiveTab('sources')}
+            />
           </div>
         )}
       </div>

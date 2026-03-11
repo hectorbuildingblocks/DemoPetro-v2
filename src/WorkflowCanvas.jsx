@@ -20,8 +20,11 @@ import {
 
 import AIChat from './AIChat';
 import DataSourceEditor from './DataSourceEditor';
+import { useWorkflowCanvas } from './shared/hooks/useWorkflowCanvas';
 
-const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, draggingNode, setDraggingNode, dragOffset, setDragOffset }) => {
+const WorkflowCanvas = ({ workflow, workflowId, organizationId, selectedNode, onNodeSelect, onBack, draggingNode, setDraggingNode, dragOffset, setDragOffset }) => {
+  // DB-backed workflow canvas hook (only active when workflowId is provided)
+  const canvasHook = useWorkflowCanvas(workflowId || null, organizationId || null);
   // Estados del canvas (existentes)
   const [canvasScale, setCanvasScale] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
@@ -41,9 +44,21 @@ const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, dragging
   const [showKpiModal, setShowKpiModal] = useState(false); // Nuevo modal para KPIs
   const [contextMenu, setContextMenu] = useState({ show: false, x: 0, y: 0, nodeId: null });
   
-  // Estados de workflow (existentes)
+  // Estados de workflow — initialized from hook data (DB) or fallback to workflow prop (hardcoded)
   const [workflowNodes, setWorkflowNodes] = useState(workflow?.nodes || []);
   const [workflowConnections, setWorkflowConnections] = useState(workflow?.connections || []);
+  const [dbInitialized, setDbInitialized] = useState(false);
+
+  // When hook data loads from DB, override local state (only once per workflowId)
+  React.useEffect(() => {
+    if (workflowId && !canvasHook.loading && !dbInitialized) {
+      if (canvasHook.nodes.length > 0) {
+        setWorkflowNodes(canvasHook.nodes);
+        setWorkflowConnections(canvasHook.connections);
+      }
+      setDbInitialized(true);
+    }
+  }, [workflowId, canvasHook.loading, canvasHook.nodes, canvasHook.connections, dbInitialized]);
   const [workflowData, setWorkflowData] = useState({
     name: workflow?.name || 'Nuevo Digital Twin',
     description: workflow?.description || 'Descripción del proyecto',
@@ -70,7 +85,7 @@ const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, dragging
   // Estado para detalles del nodo seleccionado (NUEVO)
   const [selectedNodeDetails, setSelectedNodeDetails] = useState(null);
   
-  // Estados de KPIs (existentes)
+  // TODO: KPIs should eventually be loaded from useKPIs hook scoped to this workflow
   const [kpis, setKpis] = useState([
     { 
       id: 'efficiency', 
@@ -119,7 +134,7 @@ const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, dragging
     isAnalyzing: false
   });
 
-  // Datos por defecto basados en ProjectData (integración)
+  // TODO: defaultDataSources should eventually come from useDataSources hook
   const [defaultDataSources] = useState([
     {
       id: 1,
@@ -230,7 +245,7 @@ const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, dragging
     return () => clearInterval(interval);
   }, [isSimulating, currentSimulatingNode, workflowNodes, workflowConnections]);
 
-  // Datos para gráficas (nuevos)
+  // TODO: chartData should eventually come from DB (workflow analytics/metrics table)
   const chartData = {
     efficiency: [
       { name: 'Ene', value: 85, target: 90 },
@@ -505,15 +520,28 @@ const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, dragging
         setConnectionStart(nodeId);
       } else {
         if (connectionStart !== nodeId) {
+          const tempId = `conn_${Date.now()}`;
           const newConnection = {
-            id: `conn_${Date.now()}`,
+            id: tempId,
             from: connectionStart,
             to: nodeId,
-            progress: Math.floor(Math.random() * 100),
+            progress: 0,
             conditions: [],
             type: 'data_flow'
           };
+          // Optimistic local update
           setWorkflowConnections([...workflowConnections, newConnection]);
+
+          // Persist to DB and replace temp id with DB-generated id
+          if (workflowId) {
+            canvasHook.addConnection(connectionStart, nodeId).then(dbConn => {
+              if (dbConn) {
+                setWorkflowConnections(prev =>
+                  prev.map(c => c.id === tempId ? { ...c, id: dbConn.id } : c)
+                );
+              }
+            });
+          }
         }
         setConnectionStart(null);
         setConnectingMode(false);
@@ -565,6 +593,10 @@ const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, dragging
 
   const addNewNode = (type) => {
     const nodeType = nodeTypes.find(nt => nt.id === type);
+    const position = {
+      x: 200 + Math.random() * 600,
+      y: 150 + Math.random() * 400
+    };
     const newNode = {
       id: `node_${Date.now()}`,
       name: `Nuevo ${nodeType.name}`,
@@ -573,10 +605,7 @@ const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, dragging
       duration: '15 días',
       cost: '$50K',
       progress: 0,
-      position: { 
-        x: 200 + Math.random() * 600, 
-        y: 150 + Math.random() * 400 
-      },
+      position,
       kpis: { efficiency: '0%', quality: '0%', completion: '0%' },
       automations: [],
       dataSources: [],
@@ -584,29 +613,52 @@ const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, dragging
       priority: 'Media',
       owner: 'Sin asignar'
     };
-    
+
+    // Optimistic local update
     setWorkflowNodes([...workflowNodes, newNode]);
     setShowAddNodeModal(false);
+
+    // Persist to DB if connected
+    if (workflowId) {
+      canvasHook.addNode(type, position, `Nuevo ${nodeType.name}`).then(dbNode => {
+        if (dbNode) {
+          // Replace optimistic node with DB-returned node (use DB-generated key)
+          setWorkflowNodes(prev =>
+            prev.map(n => n.id === newNode.id ? { ...n, id: dbNode.id } : n)
+          );
+        }
+      });
+    }
   };
 
   // Mantener todas las demás funciones de canvas, KPIs, etc. del código original...
   const deleteNode = (nodeId) => {
     setWorkflowNodes(workflowNodes.filter(node => node.id !== nodeId));
-    setWorkflowConnections(workflowConnections.filter(conn => 
+    setWorkflowConnections(workflowConnections.filter(conn =>
       conn.from !== nodeId && conn.to !== nodeId
     ));
     setContextMenu({ show: false, x: 0, y: 0, nodeId: null });
     if (selectedNodeDetails?.id === nodeId) {
       setSelectedNodeDetails(null);
     }
+
+    // Persist to DB
+    if (workflowId) {
+      canvasHook.removeNode(nodeId);
+    }
   };
 
   const updateNode = (nodeId, updates) => {
-    setWorkflowNodes(nodes => 
+    setWorkflowNodes(nodes =>
       nodes.map(node => node.id === nodeId ? { ...node, ...updates } : node)
     );
     if (selectedNodeDetails?.id === nodeId) {
       setSelectedNodeDetails(prev => ({ ...prev, ...updates }));
+    }
+
+    // Persist to DB
+    if (workflowId) {
+      canvasHook.updateNode(nodeId, updates);
     }
   };
 
@@ -675,10 +727,18 @@ const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, dragging
   }, [draggingNode, dragOffset, canvasScale, panOffset, isPanning, lastPanPoint, workflowNodes]);
 
   const handleMouseUp = useCallback(() => {
+    // Persist dragged node position to DB
+    if (draggingNode && workflowId) {
+      const draggedNode = workflowNodes.find(n => n.id === draggingNode);
+      if (draggedNode) {
+        canvasHook.updateNodePosition(draggingNode, draggedNode.position);
+      }
+    }
+
     setDraggingNode(null);
     setDragOffset({ x: 0, y: 0 });
     setIsPanning(false);
-  }, [setDraggingNode, setDragOffset]);
+  }, [setDraggingNode, setDragOffset, draggingNode, workflowId, workflowNodes, canvasHook]);
 
   // REMOVIDO: handleWheel function - Ya no necesitamos zoom con scroll
 
@@ -1992,6 +2052,25 @@ const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, dragging
       `}</style>
 
       <div className="content-area">
+        {/* Loading state for DB data */}
+        {workflowId && canvasHook.loading && !dbInitialized && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', gap: '12px', color: '#6b7684', background: 'white', borderBottom: '1px solid #e5e8eb' }}>
+            <RefreshCw size={18} style={{ animation: 'spin 1s linear infinite' }} />
+            <span>Cargando datos del workflow...</span>
+          </div>
+        )}
+
+        {/* Error state for DB data */}
+        {workflowId && canvasHook.error && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', gap: '12px', color: '#ef4444', background: '#fef2f2', borderBottom: '1px solid #fecaca' }}>
+            <AlertTriangle size={18} />
+            <span>Error al cargar datos: {canvasHook.error}</span>
+            <button onClick={() => canvasHook.refetch()} style={{ padding: '4px 12px', borderRadius: '6px', border: '1px solid #fecaca', background: 'white', cursor: 'pointer', fontSize: '13px' }}>
+              Reintentar
+            </button>
+          </div>
+        )}
+
         <div className="workflow-canvas-container">
           <div className="canvas-header">
             <div className="canvas-header-top">
@@ -3422,7 +3501,7 @@ const WorkflowCanvas = ({ workflow, selectedNode, onNodeSelect, onBack, dragging
               <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '8px' }}>
                 <div style={{ marginBottom: '8px' }}>
                   <span style={{ fontSize: '12px', fontWeight: '600', color: '#6366f1' }}>IF</span>
-                  <span style={{ marginLeft: '8px', fontSize: '14px' }}>efficiency > 90</span>
+                  <span style={{ marginLeft: '8px', fontSize: '14px' }}>{'efficiency > 90'}</span>
                   <span style={{ marginLeft: '8px', color: '#10b981', fontSize: '12px' }}>→ continue (80%)</span>
                 </div>
                 <div>
